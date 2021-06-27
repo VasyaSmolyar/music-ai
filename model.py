@@ -13,7 +13,6 @@ class MusicDataset(Dataset):
     def __init__(self, path):
         self.path = path
         self.labels = [ x for x in os.listdir(path) if os.path.isdir(os.path.join(path, x)) ]
-        print("LABELS", self.labels)
 
     def __len__(self):
         return 1000
@@ -23,24 +22,41 @@ class MusicDataset(Dataset):
         x = idx % 100
 
         label = self.labels[l]
-        waveform, _ = torchaudio.load(os.path.join(self.path, label, '{}.{:05d}.wav'.format(label, x)), 30)
+        waveform, sample_rate = torchaudio.load(os.path.join(self.path, label, '{}.{:05d}.wav'.format(label, x)), 30)
 
         waveform = torch.split(waveform, 660000, 1)[0]
 
-        return waveform, l
+        n_fft = 400.0
+        frame_length = n_fft / sample_rate * 1000.0
+        frame_shift = frame_length / 2.0
+
+        params = {
+            "channel": 0,
+            "dither": 0.0,
+            "window_type": "hanning",
+            "frame_length": frame_length,
+            "frame_shift": frame_shift,
+            "remove_dc_offset": True,
+            "round_to_power_of_two": False,
+            "sample_frequency": sample_rate,
+        }
+
+        mfcc = torchaudio.compliance.kaldi.mfcc(waveform, **params)
+        
+        return mfcc, l
 
 
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
-        self.layer1 = nn.Sequential( nn.Conv1d(1, 32, kernel_size=5, stride=1, padding=2), 
+        self.layer1 = nn.Sequential( nn.Conv1d(3299, 32, kernel_size=5, stride=1, padding=2), 
             nn.ReLU(), nn.MaxPool1d(kernel_size=2, stride=2)) 
         self.layer2 = nn.Sequential( nn.Conv1d(32, 64, kernel_size=5, stride=1, padding=2), 
             nn.ReLU(), nn.MaxPool1d(kernel_size=2, stride=2)) 
         self.drop_out = nn.Dropout()
 
-        self.fc1 = nn.Linear(7 * 7 * 64, 1000) 
-        self.fc2 = nn.Linear(1000, 10)
+        self.fc1 = nn.Linear(192, 50) 
+        self.fc2 = nn.Linear(50, 10)
 
     def forward(self, x): 
         out = self.layer1(x) 
@@ -60,7 +76,7 @@ criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 
 data = MusicDataset('Data/genres_original')
-dataloader = DataLoader(data, batch_size=64, shuffle=True)
+dataloader = DataLoader(data, batch_size=4, shuffle=True)
 
 total_step = 0
 num_epochs = 10
